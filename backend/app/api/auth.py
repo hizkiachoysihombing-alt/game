@@ -4,6 +4,7 @@ Authentication API routes.
 
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
@@ -107,8 +108,9 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """Login with email/username and password."""
+    identifier = form_data.username.strip().lower()
     user = db.query(User).filter(
-        (User.email == form_data.username) | (User.username == form_data.username)
+        (func.lower(User.email) == identifier) | (func.lower(User.username) == identifier)
     ).first()
     
     if not user or not verify_password(form_data.password, user.hashed_password):

@@ -34,7 +34,7 @@ class APIClient {
       async (error: AxiosError) => {
         const request = error.config as (typeof error.config & { _retry?: boolean });
         const refreshToken = localStorage.getItem('refresh_token');
-        if (error.response?.status === 401 && request && !request._retry && refreshToken && !request.url?.includes('/api/auth/refresh')) {
+        if (error.response?.status === 401 && request && !request._retry && refreshToken && !request.url?.includes('/api/auth/refresh') && !request.url?.includes('/api/auth/login')) {
           request._retry = true;
           try {
             const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, { refresh_token: refreshToken });
