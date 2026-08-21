@@ -1,6 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Keep browser requests on the same origin. Next.js proxies /api and /health
+// to the private backend, so a public deployment only needs one endpoint.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 class APIClient {
   private client: AxiosInstance;
