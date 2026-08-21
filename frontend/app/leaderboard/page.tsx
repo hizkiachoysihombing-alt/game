@@ -1,0 +1,28 @@
+'use client';
+import {useEffect,useState} from 'react';
+import {apiClient} from '@/services/api-client';
+import {useAuth} from '@/app/providers/auth-context';
+import {StudentHeader} from '@/app/components/student-header';
+import {LeagueIcon} from '@/app/components/ui-icons';
+
+const periods=[{id:'daily',label:'Harian'},{id:'weekly',label:'Mingguan'},{id:'monthly',label:'Bulanan'}];
+const medal:any={1:{solid:'#C59A32',soft:'#F5E9C8'},2:{solid:'#9CA5AF',soft:'#E7EAED'},3:{solid:'#95613F',soft:'#E8D4C7'}};
+
+export default function LeaderboardPage(){
+ const{user}=useAuth();
+ const[period,setPeriod]=useState('weekly'),[rows,setRows]=useState<any[]>([]),[error,setError]=useState(''),[loading,setLoading]=useState(true);
+ useEffect(()=>{setLoading(true);setError('');apiClient.getLeaderboard(period,'ranked_engineering').then(setRows).catch(()=>setError('Leaderboard tidak dapat dimuat.')).finally(()=>setLoading(false));},[period]);
+ const me=rows.find(row=>row.user_id===user?.id);
+ const podium=[{place:2,row:rows[1]||null},{place:1,row:rows[0]||null},{place:3,row:rows[2]||null}];
+ return <main className="app-page min-h-screen pb-28 md:pl-[244px] md:pb-12"><StudentHeader/><div className="mx-auto max-w-[720px] px-4 py-8 sm:px-6 sm:py-12">
+  <header className="text-center"><p className="text-xs font-black uppercase tracking-[.16em] text-slate-500">Kompetisi ElectroQuest</p><h1 className="mt-2 text-3xl font-black tracking-tight">Leaderboard</h1><p className="mt-2 text-sm text-slate-500">Naikkan posisi dengan menjawab akurat dan cepat.</p></header>
+  <section className="mt-7 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+   <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 dark:border-slate-800 sm:px-6"><div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">{periods.map(item=><button key={item.id} onClick={()=>setPeriod(item.id)} className={`rounded-md px-3 py-2 text-xs font-black transition ${period===item.id?'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900':'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}>{item.label}</button>)}</div><span className="text-right text-[11px] leading-4 text-slate-400">Berakhir dalam<br/><b className="text-slate-600 dark:text-slate-300">3 hari</b></span></div>
+
+   <div className="px-4 pb-5 pt-8 sm:px-7"><div className="grid grid-cols-3 items-end gap-3">{podium.map(({place,row})=>{const first=place===1;return <div key={place} className={`text-center ${first?'pb-7':''}`}><div className="relative mx-auto w-fit"><div style={{backgroundColor:row?medal[place].solid:'#CBD5E1'}} className={`${first?'h-[76px] w-[76px] text-2xl':'h-14 w-14 text-lg'} grid place-items-center rounded-full border-4 border-white font-black text-white shadow-md dark:border-slate-900`}>{row?(row.full_name||row.username).charAt(0).toUpperCase():'—'}</div><span style={{backgroundColor:medal[place].solid}} className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full border-2 border-white text-[10px] font-black text-white dark:border-slate-900">{place}</span></div><p className={`mt-3 truncate font-black ${first?'text-base':'text-sm'}`}>{row?(row.full_name||row.username):'Belum terisi'}</p><p className="mt-0.5 text-xs text-slate-500">{row?`${row.score} XP`:'0 XP'}</p>{first&&row&&<span style={{backgroundColor:medal[1].soft,color:'#684E10'}} className="mt-2 inline-block rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider">Top learner</span>}</div>})}</div></div>
+
+   <div className="mx-4 mb-5 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 sm:mx-6">{loading?<div className="h-52 animate-pulse bg-slate-100 dark:bg-slate-800"/>:error?<p className="p-6 text-center text-sm text-red-600">{error}</p>:rows.length?rows.map(row=><div key={row.user_id} className={`flex items-center gap-3 border-b border-slate-100 px-3 py-3 last:border-0 dark:border-slate-800 ${row.user_id===user?.id?'bg-slate-100 dark:bg-slate-800':'bg-white dark:bg-slate-900'}`}><span className="w-6 text-center text-xs font-black text-slate-500">{row.rank}</span><div style={{backgroundColor:row.rank<=3?medal[row.rank].solid:'#E2E8F0',color:row.rank<=3?'white':'#475569'}} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-black">{(row.full_name||row.username).charAt(0).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><strong className="truncate text-sm">{row.full_name||row.username}</strong>{row.user_id===user?.id&&<span className="rounded bg-slate-800 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white dark:bg-slate-200 dark:text-slate-900">Kamu</span>}</div><p className="truncate text-[11px] text-slate-400">@{row.username}</p></div><span className="text-sm font-black text-slate-700 dark:text-slate-200">{row.score} <small className="font-semibold text-slate-400">XP</small></span></div>):<div className="p-7 text-center"><LeagueIcon className="mx-auto h-7 w-7 text-slate-300"/><p className="mt-3 text-sm font-bold">Belum ada peringkat untuk periode ini.</p><p className="mt-1 text-xs text-slate-500">Selesaikan tantangan untuk menjadi yang pertama.</p></div>}</div>
+   {me&&<div className="border-t border-slate-100 px-6 py-4 text-center text-xs text-slate-500 dark:border-slate-800">Posisi kamu saat ini <b className="text-slate-900 dark:text-white">#{me.rank}</b> dengan <b className="text-slate-900 dark:text-white">{me.score} XP</b></div>}
+  </section>
+ </div></main>
+}

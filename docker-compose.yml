@@ -1,0 +1,63 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: electroquest-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - electroquest-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: electroquest-backend
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:password@host.docker.internal:5432/elektroquest
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
+      - APP_ENV=${APP_ENV:-development}
+      - DEBUG=${DEBUG:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "
+      python -m alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    networks:
+      - electroquest-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: electroquest-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - electroquest-network
+
+volumes:
+  redis_data:
+
+networks:
+  electroquest-network:
+    driver: bridge
