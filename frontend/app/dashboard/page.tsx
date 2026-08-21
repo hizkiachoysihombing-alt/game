@@ -56,7 +56,8 @@ export default function DashboardPage() {
       </main>
     );
   const stats = data.gamification,
-    energy = data.subscription.energy_remaining;
+    energy = data.subscription.energy_remaining,
+    energyLimit = data.subscription.energy_limit;
   const levelProgress = Math.max(
     3,
     Math.min(100, 100 - stats.xp_to_next_level),
@@ -115,9 +116,12 @@ export default function DashboardPage() {
     },
     {
       label: "Learning energy",
-      value: energy === null ? "Unlimited" : `${energy} / 10`,
+      value: energy === null ? "Unlimited" : `${energy} / ${energyLimit}`,
       detail: energy === null ? "Unlimited plan" : "Resets daily",
-      progress: energy === null ? 100 : energy * 10,
+      progress:
+        energy === null || !energyLimit
+          ? 100
+          : Math.min(100, (energy / energyLimit) * 100),
       icon: ActivityIcon,
     },
     {

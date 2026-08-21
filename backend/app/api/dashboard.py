@@ -97,13 +97,15 @@ async def student_dashboard(current_user=Depends(get_current_user), db: Session 
     mastery_rows = db.query(MasteryRecord, Topic).join(Topic).filter(MasteryRecord.user_id == current_user.id).all()
     diagnoses = db.query(ReasoningDiagnosis).filter_by(user_id=current_user.id, error_detected=True).order_by(ReasoningDiagnosis.created_at.desc()).limit(5).all()
     quests = db.query(UserQuest).filter_by(user_id=current_user.id).order_by(UserQuest.assigned_at.desc()).limit(5).all()
-    remaining = None if subscription and subscription.plan != SubscriptionPlan.FREE else max(0, (quota.daily_problems_limit if quota else settings.FREE_PLAN_DAILY_ENERGY) - (quota.daily_problems_used if quota else 0))
+    unlimited_energy = bool(subscription and subscription.plan != SubscriptionPlan.FREE)
+    energy_limit = None if unlimited_energy else (quota.daily_problems_limit if quota else settings.FREE_PLAN_DAILY_ENERGY)
+    remaining = None if unlimited_energy else max(0, energy_limit - (quota.daily_problems_used if quota else 0))
     overall_mastery = round(sum(record.mastery_level for record, _ in mastery_rows) / len(mastery_rows), 1) if mastery_rows else 0
     db.commit()
     return {
         "student": {"id": current_user.id, "full_name": current_user.full_name, "avatar_url": current_user.avatar_url},
         "gamification": {"level": profile.level, "rank": "Apprentice Engineer" if profile.level < 5 else "Circuit Analyst", "total_xp": profile.total_xp, "xp_to_next_level": profile.xp_to_next_level, "coins": profile.coins, "current_streak_days": profile.current_streak_days, "longest_streak_days": profile.longest_streak_days, "problems_solved": profile.problems_solved, "accuracy_average": profile.accuracy_average},
-        "subscription": {"plan": subscription.plan.value if subscription else "free", "energy_remaining": remaining},
+        "subscription": {"plan": subscription.plan.value if subscription else "free", "energy_remaining": remaining, "energy_limit": energy_limit},
         "mastery": {"overall": overall_mastery, "topics": [{"topic_id": topic.id, "name": topic.name, "level": record.mastery_level, "needs_review": record.needs_review} for record, topic in mastery_rows]},
         "quests": [{"id": item.id, "name": item.quest.name, "progress": item.progress, "target": item.target, "completed": item.completed_at is not None} for item in quests],
         "recent_errors": [{"type": item.error_type.value if item.error_type else "other", "analysis": item.analysis, "recommended_review": item.recommended_review} for item in diagnoses],
