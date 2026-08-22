@@ -196,19 +196,11 @@ class APIClient {
     return response.data;
   }
 
-  async downloadSource(sourceId: string, fileName: string): Promise<void> {
+  async getSourceBlob(sourceId: string): Promise<Blob> {
     const response = await this.client.get<Blob>(`/api/sources/${sourceId}`, {
-      params: { download: true },
       responseType: 'blob',
     });
-    const objectUrl = URL.createObjectURL(response.data);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    return response.data;
   }
 
   async getNextJourneyProblem(topicId?: number, unit?: number, excludeIds: number[] = []) {

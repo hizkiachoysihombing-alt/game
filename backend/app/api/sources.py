@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from app.core.security import get_current_user
@@ -215,10 +215,9 @@ def list_sources(current_user=Depends(get_current_user)):
 @router.get("/{source_id}")
 def get_source_file(
     source_id: str,
-    download: bool = Query(default=False),
     current_user=Depends(get_current_user),
 ):
-    """Open or download one source file selected by its manifest SHA-256."""
+    """Open one source file inline, selected by its manifest SHA-256."""
     del current_user
     normalized_id = source_id.lower()
     if not SHA256_PATTERN.fullmatch(normalized_id):
@@ -239,7 +238,7 @@ def get_source_file(
         source_path,
         media_type=record["content_type"],
         filename=record["name"],
-        content_disposition_type="attachment" if download else "inline",
+        content_disposition_type="inline",
     )
     response.headers["Cache-Control"] = "private, max-age=300"
     response.headers["X-Content-Type-Options"] = "nosniff"

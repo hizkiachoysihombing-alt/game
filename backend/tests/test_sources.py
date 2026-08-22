@@ -104,17 +104,22 @@ def test_source_library_lists_only_valid_manifest_files(
     )
 
 
-def test_source_download_uses_id_and_preserves_integrity(
+def test_source_viewer_uses_id_and_preserves_integrity(
     client: TestClient,
     source_root: tuple[Path, bytes, str],
 ) -> None:
     _, payload, digest = source_root
-    response = client.get(f"/api/sources/{digest}?download=true")
+    response = client.get(f"/api/sources/{digest}")
     assert response.status_code == 200
     assert response.content == payload
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert "attachment" in response.headers["content-disposition"]
+    assert "inline" in response.headers["content-disposition"]
+
+    forced_download = client.get(f"/api/sources/{digest}?download=true")
+    assert forced_download.status_code == 200
+    assert "inline" in forced_download.headers["content-disposition"]
+    assert "attachment" not in forced_download.headers["content-disposition"]
 
 
 @pytest.mark.parametrize(
