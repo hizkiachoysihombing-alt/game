@@ -28,6 +28,9 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      SOURCE_MATERIALS_ROOT: /source_materials
+    volumes:
+      - ./source_materials:/source_materials:ro
     command: ["sh", "-c", "python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}"]
     depends_on:
       redis:

@@ -26,10 +26,12 @@ services:
       - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
       - APP_ENV=${APP_ENV:-development}
       - DEBUG=${DEBUG:-true}
+      - SOURCE_MATERIALS_ROOT=/source_materials
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./source_materials:/source_materials:ro
     depends_on:
       redis:
         condition: service_healthy

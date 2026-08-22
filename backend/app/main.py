@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, users, courses, learning, gamification, billing, admin, dashboard, journey
+from app.api import auth, users, courses, learning, gamification, billing, admin, dashboard, journey, sources
 from app.core.database import engine, Base
 from app.models import models
 from app.core.database import init_db
@@ -79,6 +79,7 @@ app.include_router(billing.router, prefix="/api/billing", tags=["Billing"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(journey.router, prefix="/api/journey", tags=["Adaptive Journey"])
+app.include_router(sources.router, prefix="/api/sources", tags=["Source Library"])
 
 
 if __name__ == "__main__":

@@ -4,6 +4,27 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 // to the private backend, so a public deployment only needs one endpoint.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
+export interface SourceFile {
+  id: string;
+  name: string;
+  extension: string;
+  size_bytes: number;
+  content_type: string;
+}
+
+export interface SourceCategory {
+  id: string;
+  name: string;
+  file_count: number;
+  files: SourceFile[];
+}
+
+export interface SourceLibrary {
+  total_files: number;
+  total_categories: number;
+  categories: SourceCategory[];
+}
+
 class APIClient {
   private client: AxiosInstance;
 
@@ -168,6 +189,26 @@ class APIClient {
   async getJourneyMap() {
     const response = await this.client.get('/api/journey/map');
     return response.data;
+  }
+
+  async getSources(): Promise<SourceLibrary> {
+    const response = await this.client.get<SourceLibrary>('/api/sources');
+    return response.data;
+  }
+
+  async downloadSource(sourceId: string, fileName: string): Promise<void> {
+    const response = await this.client.get<Blob>(`/api/sources/${sourceId}`, {
+      params: { download: true },
+      responseType: 'blob',
+    });
+    const objectUrl = URL.createObjectURL(response.data);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   async getNextJourneyProblem(topicId?: number, unit?: number, excludeIds: number[] = []) {
