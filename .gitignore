@@ -76,6 +76,9 @@ pnpm-debug.log*
 *.db
 pgdata/
 
+# Private source materials (PDF, Word, and ingestion batches)
+source_materials/
+
 # Logs
 logs/
 *.log
