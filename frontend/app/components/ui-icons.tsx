@@ -7,6 +7,12 @@ export const BoltIcon = (p: IconProps) => <svg {...base} {...p}><path d="m13 2-9
 export const HomeIcon = (p: IconProps) => <svg {...base} {...p}><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>;
 export const RouteIcon = (p: IconProps) => <svg {...base} {...p}><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 3-3V9a3 3 0 0 1 3-3"/></svg>;
 export const SourceIcon = (p: IconProps) => <svg {...base} {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/><path d="M8 7h8M8 11h6"/></svg>;
+export const CompassIcon = (p: IconProps) => <svg {...base} {...p}><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/></svg>;
+export const BookmarkIcon = (p: IconProps) => <svg {...base} {...p}><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg>;
+export const HistoryIcon = (p: IconProps) => <svg {...base} {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>;
+export const StudioIcon = (p: IconProps) => <svg {...base} {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 8h8M8 12h5M8 16h3"/></svg>;
+export const UploadIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 16V4m-4 4 4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>;
+export const ReviewIcon = (p: IconProps) => <svg {...base} {...p}><path d="M9 11h6M9 15h4"/><path d="M7 3h10a2 2 0 0 1 2 2v16l-3-2-4 2-4-2-3 2V5a2 2 0 0 1 2-2Z"/></svg>;
 export const LeagueIcon = (p: IconProps) => <svg {...base} {...p}><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4v2a4 4 0 0 0 4 4M17 6h3v2a4 4 0 0 1-4 4"/></svg>;
 export const FlameIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 22c4 0 7-3 7-7 0-3-2-6-5-9 0 3-2 4-3 5 0-4-2-7-2-9-3 3-4 7-4 11 0 5 3 9 7 9Z"/></svg>;
 export const TargetIcon = (p: IconProps) => <svg {...base} {...p}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>;

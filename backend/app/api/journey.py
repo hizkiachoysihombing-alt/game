@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.models import GamificationProfile, MasteryRecord, ProblemSubmission, Question, QuestionBank, Subject, Topic
+from app.services.question_workflow import learner_question_filters, learner_source_recommendations
 
 router = APIRouter()
 
@@ -29,7 +30,7 @@ async def journey_map(current_user=Depends(get_current_user), db: Session = Depe
     question_counts = dict(
         db.query(QuestionBank.topic_id, func.count(Question.id))
         .join(Question, Question.question_bank_id == QuestionBank.id)
-        .filter(Question.is_published.is_(True))
+        .filter(*learner_question_filters())
         .group_by(QuestionBank.topic_id)
         .all()
     )
@@ -60,7 +61,13 @@ async def next_adaptive_problem(topic_id: int | None = None, unit: int | None = 
     profile = db.query(GamificationProfile).filter_by(user_id=current_user.id).first()
     recent_ids = [row.question_id for row in db.query(ProblemSubmission).filter_by(user_id=current_user.id).order_by(ProblemSubmission.submitted_at.desc()).limit(8).all()]
     mastery = {row.topic_id: row for row in db.query(MasteryRecord).filter_by(user_id=current_user.id).all()}
-    candidate_query = db.query(Question).join(QuestionBank).join(Topic).join(Subject).filter(Subject.order < 900, Question.is_published.is_(True))
+    candidate_query = (
+        db.query(Question)
+        .join(QuestionBank)
+        .join(Topic)
+        .join(Subject)
+        .filter(Subject.order < 900, *learner_question_filters())
+    )
     if topic_id is not None:
         selected_topic = db.query(Topic).join(Subject).filter(Topic.id == topic_id, Subject.order < 900).first()
         if selected_topic is None:
@@ -88,4 +95,4 @@ async def next_adaptive_problem(topic_id: int | None = None, unit: int | None = 
     ranked = sorted(candidates, key=priority)
     question = random.choice(ranked[:min(3, len(ranked))])
     topic = question.question_bank.topic
-    return {"session_id": uuid.uuid4().hex, "unit": unit, "selection_reason": f"Selected inside {topic.name} for your current {preferred} difficulty target.", "question": {"id": question.id, "title": question.title, "content_html": question.content_html, "difficulty": question.difficulty.value, "question_type": question.question_type.value, "topic": topic.name, "subject": topic.subject.name, "accepted_units": question.accepted_units or [], "coding_language": question.coding_language, "starter_code": question.starter_code, "test_count": len(question.test_cases or [])}}
+    return {"session_id": uuid.uuid4().hex, "unit": unit, "selection_reason": f"Selected inside {topic.name} for your current {preferred} difficulty target.", "question": {"id": question.id, "title": question.title, "content_html": question.content_html, "difficulty": question.difficulty.value, "question_type": question.question_type.value, "topic": topic.name, "subject": topic.subject.name, "accepted_units": question.accepted_units or [], "coding_language": question.coding_language, "starter_code": question.starter_code, "test_count": len(question.test_cases or []), "sources": learner_source_recommendations(question, purposes={"prompt"})}}

@@ -1,245 +1,344 @@
-"""Authenticated access to private, manifest-listed learning sources."""
+"""Student-facing access to the reviewed, private source library."""
 
 from __future__ import annotations
 
-import csv
-import hashlib
-import os
 import re
-from functools import lru_cache
-from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from datetime import datetime
+from pathlib import Path
+from typing import Iterator
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.models import (
+    SourceBlob,
+    SourceBookmark,
+    SourceDocument,
+    SourceDocumentTopic,
+    SourceReadEvent,
+    SourceReadProgress,
+    SourceReport,
+    SourceStatus,
+    SourceVersion,
+    Subject,
+    Topic,
+)
+from app.services.source_storage import get_source_storage
 
 router = APIRouter()
-
-DEFAULT_SOURCE_ROOT = Path(__file__).resolve().parents[3] / "source_materials"
-SOURCE_ROOT = Path(
-    os.getenv("SOURCE_MATERIALS_ROOT")
-    or os.getenv("SOURCE_MATERIALS_DIR")
-    or DEFAULT_SOURCE_ROOT
-).resolve()
-ALLOWED_CONTENT_TYPES = {
-    ".pdf": "application/pdf",
-    ".doc": "application/msword",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-CATEGORY_LABELS = {
-    "fisika-dasar": "Fisika Dasar",
-    "kimia-dasar": "Kimia Dasar",
-    "basis-data": "Basis Data",
-    "sistem-digital": "Sistem Digital",
-    "matematika-teknik": "Matematika Teknik",
-    "belum-terklasifikasi": "Belum Terklasifikasi",
-}
-CATEGORY_ORDER = {key: index for index, key in enumerate(CATEGORY_LABELS)}
 
 
-def _safe_source_path(relative_path: str) -> Path | None:
-    """Resolve only simple POSIX manifest paths that stay below SOURCE_ROOT."""
-    value = relative_path.strip()
-    if not value or any(character in value for character in ("\x00", "\r", "\n", "\\", ":")):
-        return None
-
-    posix_path = PurePosixPath(value)
-    windows_path = PureWindowsPath(value)
-    raw_parts = value.split("/")
-    if (
-        posix_path.is_absolute()
-        or windows_path.is_absolute()
-        or windows_path.drive
-        or windows_path.root
-        or any(part in {"", ".", ".."} for part in raw_parts)
-    ):
-        return None
-
-    try:
-        root = SOURCE_ROOT.resolve(strict=True)
-        candidate = (root / Path(*posix_path.parts)).resolve(strict=True)
-    except (OSError, RuntimeError):
-        return None
-
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        return None
-
-    if not candidate.is_file() or candidate.suffix.lower() not in ALLOWED_CONTENT_TYPES:
-        return None
-    if any(character in candidate.name for character in ("\r", "\n")):
-        return None
-    return candidate
+class BookmarkPayload(BaseModel):
+    page: int | None = Field(default=None, ge=1)
+    note: str | None = Field(default=None, max_length=500)
 
 
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+class ProgressPayload(BaseModel):
+    page: int | None = Field(default=None, ge=1)
+    progress_percent: float = Field(ge=0, le=100)
+    session_id: str | None = Field(default=None, max_length=100)
 
 
-def _manifest_files() -> list[Path]:
-    manifest_root = SOURCE_ROOT / "manifests"
-    if not manifest_root.is_dir():
-        return []
-    return sorted(manifest_root.glob("*.csv"))
+class ReportPayload(BaseModel):
+    category: str = Field(min_length=2, max_length=40)
+    message: str = Field(min_length=5, max_length=2000)
+    version_id: int | None = None
 
 
-def _catalog_signature() -> tuple[Any, ...]:
-    """Track manifests and listed files so newly added batches appear automatically."""
-    signature: list[Any] = [str(SOURCE_ROOT)]
-    for manifest in _manifest_files():
-        try:
-            manifest_stat = manifest.stat()
-            signature.append((str(manifest), manifest_stat.st_mtime_ns, manifest_stat.st_size))
-            with manifest.open("r", encoding="utf-8-sig", newline="") as handle:
-                for row in csv.DictReader(handle):
-                    source_path = _safe_source_path((row.get("relative_path") or "").strip())
-                    if source_path is not None:
-                        source_stat = source_path.stat()
-                        signature.append(
-                            (str(source_path), source_stat.st_mtime_ns, source_stat.st_size)
-                        )
-        except (OSError, csv.Error, UnicodeError):
-            signature.append((str(manifest), "unreadable"))
-    return tuple(signature)
+def _status_value(status: SourceStatus | str) -> str:
+    return status.value if isinstance(status, SourceStatus) else str(status)
 
 
-@lru_cache(maxsize=2)
-def _load_records_cached(signature: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
-    del signature  # The value is the cache key; records are read from the current root.
-    records: dict[str, dict[str, Any]] = {}
-
-    for manifest in _manifest_files():
-        try:
-            with manifest.open("r", encoding="utf-8-sig", newline="") as handle:
-                for row in csv.DictReader(handle):
-                    digest = (row.get("sha256") or "").strip().lower()
-                    relative_path = (row.get("relative_path") or "").strip()
-                    source_path = _safe_source_path(relative_path)
-                    if not SHA256_PATTERN.fullmatch(digest) or source_path is None:
-                        continue
-
-                    manifest_extension = (row.get("extension") or "").strip().lower()
-                    manifest_name = (row.get("file_name") or "").strip()
-                    if (
-                        manifest_extension != source_path.suffix.lower()
-                        or manifest_name != source_path.name
-                        or any(character in manifest_name for character in ("\r", "\n"))
-                    ):
-                        continue
-
-                    try:
-                        manifest_size = int((row.get("bytes") or "").strip())
-                    except ValueError:
-                        continue
-                    actual_size = source_path.stat().st_size
-                    if manifest_size != actual_size or _hash_file(source_path) != digest:
-                        continue
-
-                    category = (row.get("category") or "belum-terklasifikasi").strip()
-                    records.setdefault(
-                        digest,
-                        {
-                            "id": digest,
-                            "name": source_path.name,
-                            "category": category,
-                            "category_label": CATEGORY_LABELS.get(
-                                category, category.replace("-", " ").title()
-                            ),
-                            "extension": source_path.suffix.lower().lstrip("."),
-                            "size_bytes": actual_size,
-                            "content_type": ALLOWED_CONTENT_TYPES[source_path.suffix.lower()],
-                            "_path": source_path,
-                        },
-                    )
-        except (OSError, csv.Error, UnicodeError):
-            continue
-
-    return tuple(
-        sorted(
-            records.values(),
-            key=lambda item: (
-                CATEGORY_ORDER.get(item["category"], 999),
-                item["category_label"].casefold(),
-                item["name"].casefold(),
-            ),
-        )
+def _latest_version(db: Session, document_id: int) -> SourceVersion | None:
+    return (
+        db.query(SourceVersion)
+        .filter(SourceVersion.document_id == document_id)
+        .order_by(SourceVersion.version_number.desc(), SourceVersion.id.desc())
+        .first()
     )
 
 
-def _load_records() -> tuple[dict[str, Any], ...]:
-    return _load_records_cached(_catalog_signature())
+def _document_topics(db: Session, document_id: int) -> list[Topic]:
+    return (
+        db.query(Topic)
+        .join(SourceDocumentTopic, SourceDocumentTopic.topic_id == Topic.id)
+        .filter(SourceDocumentTopic.document_id == document_id)
+        .order_by(SourceDocumentTopic.is_primary.desc(), Topic.name)
+        .all()
+    )
 
 
-def _public_record(record: dict[str, Any]) -> dict[str, Any]:
+def _get_document(db: Session, source_id: str, *, published_only: bool = True) -> SourceDocument:
+    query = db.query(SourceDocument)
+    if published_only:
+        query = query.filter(SourceDocument.status == SourceStatus.PUBLISHED.value)
+    document = query.filter(SourceDocument.public_id == source_id).first()
+    if document is None and SHA256_PATTERN.fullmatch(source_id.lower()):
+        document = (
+            query.join(SourceVersion, SourceVersion.document_id == SourceDocument.id)
+            .join(SourceBlob, SourceBlob.id == SourceVersion.blob_id)
+            .filter(SourceBlob.sha256 == source_id.lower())
+            .first()
+        )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Source document not found")
+    return document
+
+
+def _serialize_document(db: Session, document: SourceDocument, user_id: int) -> dict:
+    version = _latest_version(db, document.id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Source version not found")
+    blob = db.query(SourceBlob).filter(SourceBlob.id == version.blob_id).one()
+    subject = db.query(Subject).filter(Subject.id == document.subject_id).first() if document.subject_id else None
+    topics = _document_topics(db, document.id)
+    bookmark = db.query(SourceBookmark).filter_by(user_id=user_id, document_id=document.id).first()
+    progress = db.query(SourceReadProgress).filter_by(user_id=user_id, document_id=document.id).first()
     return {
-        "id": record["id"],
-        "name": record["name"],
-        "extension": record["extension"],
-        "size_bytes": record["size_bytes"],
-        "content_type": record["content_type"],
+        "id": document.public_id,
+        "title": document.title,
+        "name": version.original_filename,
+        "description": document.description,
+        "kind": document.kind,
+        "status": _status_value(document.status),
+        "extension": blob.extension.lstrip("."),
+        "size_bytes": blob.size_bytes,
+        "content_type": blob.media_type,
+        "subject": {"id": subject.id, "name": subject.name, "slug": subject.slug} if subject else None,
+        "topics": [
+            {"id": topic.id, "name": topic.name, "slug": topic.slug, "parent_id": topic.parent_id}
+            for topic in topics
+        ],
+        "version": {
+            "id": version.id,
+            "version_number": version.version_number,
+            "page_count": version.page_count,
+            "created_at": version.created_at,
+        },
+        "is_bookmarked": bookmark is not None,
+        "bookmark_page": bookmark.page_number if bookmark else None,
+        "reading_progress": progress.progress_percent if progress else 0,
+        "last_page": progress.last_page if progress else None,
+        "last_opened_at": progress.last_opened_at if progress else None,
+        "updated_at": document.updated_at,
     }
+
+
+def _serialize_library(db: Session, documents: list[SourceDocument], user_id: int) -> dict:
+    groups: dict[str, dict] = {}
+    total_files = 0
+    for document in documents:
+        try:
+            item = _serialize_document(db, document, user_id)
+        except HTTPException:
+            continue
+        subject = item["subject"]
+        key = subject["slug"] if subject else "lainnya"
+        group = groups.setdefault(
+            key,
+            {"id": key, "name": subject["name"] if subject else "Lainnya", "files": []},
+        )
+        group["files"].append(item)
+        total_files += 1
+    categories = sorted(groups.values(), key=lambda group: group["name"].casefold())
+    for category in categories:
+        category["files"].sort(key=lambda item: item["title"].casefold())
+        category["file_count"] = len(category["files"])
+    return {
+        "total_documents": total_files,
+        "total_files": total_files,
+        "total_categories": len(categories),
+        "categories": categories,
+    }
+
+
+def _published_query(db: Session):
+    return db.query(SourceDocument).filter(SourceDocument.status == SourceStatus.PUBLISHED.value)
 
 
 @router.get("", include_in_schema=True)
 @router.get("/", include_in_schema=False)
-def list_sources(current_user=Depends(get_current_user)):
-    """List source documents grouped by their reviewed subject category."""
-    del current_user
-    records = _load_records()
-    groups: dict[str, dict[str, Any]] = {}
-    for record in records:
-        category = record["category"]
-        group = groups.setdefault(
-            category,
-            {"id": category, "name": record["category_label"], "files": []},
-        )
-        group["files"].append(_public_record(record))
+def list_sources(
+    q: str | None = Query(default=None, max_length=200),
+    subject_id: int | None = None,
+    topic_id: int | None = None,
+    file_type: str | None = Query(default=None, max_length=10),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Browse published documents freely across every available subject."""
+    query = _published_query(db)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        query = query.filter(or_(SourceDocument.title.ilike(pattern), SourceDocument.description.ilike(pattern)))
+    if subject_id is not None:
+        query = query.filter(SourceDocument.subject_id == subject_id)
+    if topic_id is not None:
+        query = query.join(SourceDocumentTopic).filter(SourceDocumentTopic.topic_id == topic_id)
+    documents = query.order_by(SourceDocument.updated_at.desc(), SourceDocument.id.desc()).all()
+    if file_type:
+        normalized = file_type.lower().lstrip(".")
+        documents = [
+            document
+            for document in documents
+            if (version := _latest_version(db, document.id)) is not None
+            and (blob := db.query(SourceBlob).filter_by(id=version.blob_id).first()) is not None
+            and blob.extension.lower().lstrip(".") == normalized
+        ]
+    return _serialize_library(db, documents, current_user.id)
 
-    categories = sorted(
-        groups.values(),
-        key=lambda group: (CATEGORY_ORDER.get(group["id"], 999), group["name"].casefold()),
+
+@router.get("/me/bookmarks")
+def list_bookmarks(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document_ids = [
+        row.document_id
+        for row in db.query(SourceBookmark)
+        .filter(SourceBookmark.user_id == current_user.id)
+        .order_by(SourceBookmark.created_at.desc())
+        .all()
+    ]
+    documents = _published_query(db).filter(SourceDocument.id.in_(document_ids)).all() if document_ids else []
+    order = {document_id: index for index, document_id in enumerate(document_ids)}
+    documents.sort(key=lambda document: order.get(document.id, len(order)))
+    return _serialize_library(db, documents, current_user.id)
+
+
+@router.get("/me/history")
+def list_history(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = (
+        db.query(SourceReadProgress)
+        .filter(SourceReadProgress.user_id == current_user.id)
+        .order_by(SourceReadProgress.last_opened_at.desc())
+        .limit(50)
+        .all()
     )
-    for category in categories:
-        category["file_count"] = len(category["files"])
-    return {"total_files": len(records), "total_categories": len(categories), "categories": categories}
+    ids = [row.document_id for row in rows]
+    documents = _published_query(db).filter(SourceDocument.id.in_(ids)).all() if ids else []
+    order = {document_id: index for index, document_id in enumerate(ids)}
+    documents.sort(key=lambda document: order.get(document.id, len(order)))
+    return _serialize_library(db, documents, current_user.id)
+
+
+@router.get("/{source_id}/content")
+def get_source_content(
+    source_id: str,
+    version_id: int | None = None,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream a private source after authentication; storage paths never enter the URL."""
+    document = _get_document(db, source_id)
+    version_query = db.query(SourceVersion).filter(SourceVersion.document_id == document.id)
+    version = (
+        version_query.filter(SourceVersion.id == version_id).first()
+        if version_id is not None
+        else version_query.order_by(SourceVersion.version_number.desc(), SourceVersion.id.desc()).first()
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Source version not found")
+    blob = db.query(SourceBlob).filter(SourceBlob.id == version.blob_id).first()
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Source content not found")
+    storage = get_source_storage(blob.storage_backend)
+    if not storage.exists(blob.storage_key):
+        raise HTTPException(status_code=404, detail="Source content is unavailable")
+
+    db.add(SourceReadEvent(user_id=current_user.id, document_id=document.id, source_version_id=version.id, event_type="opened", page_number=None))
+    progress = db.query(SourceReadProgress).filter_by(user_id=current_user.id, document_id=document.id).first()
+    if progress is None:
+        db.add(SourceReadProgress(user_id=current_user.id, document_id=document.id, source_version_id=version.id, progress_percent=0, last_opened_at=datetime.utcnow()))
+    else:
+        progress.source_version_id = version.id
+        progress.last_opened_at = datetime.utcnow()
+    db.commit()
+
+    headers = {
+        "Cache-Control": "private, max-age=300",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:",
+    }
+    local_path = storage.local_path(blob.storage_key)
+    if local_path is not None:
+        return FileResponse(path=local_path, media_type=blob.media_type, filename=Path(version.original_filename).name, content_disposition_type="inline", headers=headers)
+
+    safe_name = Path(version.original_filename.replace("\r", "").replace("\n", "")).name
+
+    def stream_chunks() -> Iterator[bytes]:
+        with storage.open(blob.storage_key) as stream:
+            while chunk := stream.read(1024 * 1024):
+                yield chunk
+
+    headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(safe_name)}"
+    return StreamingResponse(stream_chunks(), media_type=blob.media_type, headers=headers)
 
 
 @router.get("/{source_id}")
-def get_source_file(
-    source_id: str,
-    current_user=Depends(get_current_user),
-):
-    """Open one source file inline, selected by its manifest SHA-256."""
-    del current_user
-    normalized_id = source_id.lower()
-    if not SHA256_PATTERN.fullmatch(normalized_id):
-        raise HTTPException(status_code=404, detail="Source file not found")
+def get_source_metadata(source_id: str, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document = _get_document(db, source_id)
+    return _serialize_document(db, document, current_user.id)
 
-    record = next((item for item in _load_records() if item["id"] == normalized_id), None)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Source file not found")
 
-    source_path: Path = record["_path"]
-    try:
-        if source_path.stat().st_size != record["size_bytes"] or _hash_file(source_path) != normalized_id:
-            raise HTTPException(status_code=404, detail="Source file not found")
-    except OSError as error:
-        raise HTTPException(status_code=404, detail="Source file not found") from error
+@router.put("/{source_id}/bookmark")
+def save_bookmark(source_id: str, payload: BookmarkPayload, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document = _get_document(db, source_id)
+    version = _latest_version(db, document.id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Source version not found")
+    bookmark = db.query(SourceBookmark).filter_by(user_id=current_user.id, document_id=document.id).first()
+    if bookmark is None:
+        bookmark = SourceBookmark(user_id=current_user.id, document_id=document.id)
+        db.add(bookmark)
+    bookmark.source_version_id = version.id
+    bookmark.page_number = payload.page
+    bookmark.note = payload.note.strip() if payload.note else None
+    db.commit()
+    return {"bookmarked": True, "page": bookmark.page_number, "note": bookmark.note}
 
-    response = FileResponse(
-        source_path,
-        media_type=record["content_type"],
-        filename=record["name"],
-        content_disposition_type="inline",
-    )
-    response.headers["Cache-Control"] = "private, max-age=300"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    return response
+
+@router.delete("/{source_id}/bookmark")
+def delete_bookmark(source_id: str, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document = _get_document(db, source_id)
+    bookmark = db.query(SourceBookmark).filter_by(user_id=current_user.id, document_id=document.id).first()
+    if bookmark is not None:
+        db.delete(bookmark)
+        db.commit()
+    return {"bookmarked": False}
+
+
+@router.put("/{source_id}/progress")
+def update_progress(source_id: str, payload: ProgressPayload, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document = _get_document(db, source_id)
+    version = _latest_version(db, document.id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Source version not found")
+    progress = db.query(SourceReadProgress).filter_by(user_id=current_user.id, document_id=document.id).first()
+    if progress is None:
+        progress = SourceReadProgress(user_id=current_user.id, document_id=document.id)
+        db.add(progress)
+    progress.source_version_id = version.id
+    progress.last_page = payload.page
+    progress.progress_percent = payload.progress_percent
+    progress.last_opened_at = datetime.utcnow()
+    db.add(SourceReadEvent(user_id=current_user.id, document_id=document.id, source_version_id=version.id, event_type="page", page_number=payload.page, session_id=payload.session_id))
+    db.commit()
+    return {"last_page": progress.last_page, "progress_percent": progress.progress_percent, "updated_at": progress.updated_at}
+
+
+@router.post("/{source_id}/reports", status_code=201)
+def report_source(source_id: str, payload: ReportPayload, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    document = _get_document(db, source_id)
+    version = _latest_version(db, document.id)
+    if payload.version_id is not None:
+        version = db.query(SourceVersion).filter_by(id=payload.version_id, document_id=document.id).first()
+    report = SourceReport(user_id=current_user.id, document_id=document.id, source_version_id=version.id if version else None, category=payload.category.strip().lower(), message=payload.message.strip())
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {"id": report.id, "status": report.status, "created_at": report.created_at}

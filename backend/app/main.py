@@ -12,7 +12,20 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import auth, users, courses, learning, gamification, billing, admin, dashboard, journey, sources
+from app.api import (
+    admin,
+    auth,
+    billing,
+    courses,
+    dashboard,
+    gamification,
+    journey,
+    learning,
+    question_management,
+    source_management,
+    sources,
+    users,
+)
 from app.core.database import engine, Base
 from app.models import models
 from app.core.database import init_db
@@ -34,7 +47,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ElectroQuest API",
     description="Production-ready API for electrical engineering learning platform",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -53,7 +66,7 @@ app.add_middleware(RateLimitMiddleware)
 @app.get("/health", tags=["System"])
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": "2.0.0"}
 
 
 @app.get("/ready", tags=["System"])
@@ -80,6 +93,8 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(journey.router, prefix="/api/journey", tags=["Adaptive Journey"])
 app.include_router(sources.router, prefix="/api/sources", tags=["Source Library"])
+app.include_router(source_management.router, prefix="/api/source-management", tags=["Source Management"])
+app.include_router(question_management.router, prefix="/api/question-management", tags=["Question Review"])
 
 
 if __name__ == "__main__":

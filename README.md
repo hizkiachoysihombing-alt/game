@@ -27,6 +27,7 @@ electroquest/ (monorepo)
 - **Migrations**: Alembic
 - **Deployment**: Docker, Docker Compose
 - **Testing**: pytest (backend), Vitest + React Testing Library (frontend)
+- **Private content**: versioned local or S3-compatible object storage
 
 ## Getting Started
 
@@ -91,6 +92,14 @@ See [ARCHITECTURE.md](./docs/architecture/ARCHITECTURE.md) for detailed structur
 - ✅ Dashboard and analytics
 - ✅ Reasoning diagnosis foundation
 
+### Source learning workflow
+
+- Private, versioned PDF/DOCX library with SHA-256 deduplication
+- Student bookmarks, reading history, and progress
+- Instructor/admin lifecycle: Inbox, Review, Published, Archived
+- Source-cited question drafts with mandatory human review before Journey publication
+- Optional AI drafting that never auto-publishes
+
 ### Phase 2+ (Advanced Features)
 
 - Circuit Lab and simulation
@@ -147,6 +156,7 @@ docker-compose -f docker-compose.prod.yml up
 - [Database Schema](./docs/database/SCHEMA.md)
 - [Gamification System](./docs/gamification/GAMIFICATION.md)
 - [Billing & Subscriptions](./docs/billing/BILLING.md)
+- [Source and Question Workflow](./docs/SOURCE_WORKFLOW.md)
 
 ## Contributing
 

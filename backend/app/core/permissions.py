@@ -33,6 +33,8 @@ class Permission(str, Enum):
     DELETE_COURSE = "delete_course"
     VIEW_STUDENT_PROGRESS = "view_student_progress"
     VIEW_ANALYTICS = "view_analytics"
+    MANAGE_SOURCES = "manage_sources"
+    REVIEW_QUESTIONS = "review_questions"
     
     # Admin permissions
     MANAGE_USERS = "manage_users"
@@ -62,6 +64,8 @@ ROLE_PERMISSIONS = {
         Permission.DELETE_COURSE,
         Permission.VIEW_STUDENT_PROGRESS,
         Permission.VIEW_ANALYTICS,
+        Permission.MANAGE_SOURCES,
+        Permission.REVIEW_QUESTIONS,
     ],
     UserRole.ADMIN: [
         Permission.VIEW_COURSES,
@@ -79,6 +83,8 @@ ROLE_PERMISSIONS = {
         Permission.MANAGE_COURSES,
         Permission.VIEW_SYSTEM_ANALYTICS,
         Permission.MANAGE_BILLING,
+        Permission.MANAGE_SOURCES,
+        Permission.REVIEW_QUESTIONS,
     ],
 }
 

@@ -4,7 +4,7 @@ from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.models.models import (
     User, UserRole, Subject, Course, Module, Lesson, Topic, QuestionBank,
-    Question, QuestionType, QuestionDifficulty, QuestionAnswer,
+    Question, QuestionType, QuestionDifficulty, QuestionWorkflowStatus, QuestionAnswer,
     Achievement, Quest, UserQuest,
 )
 from app.content.electrical_engineering_curriculum import COURSE_METADATA, CURRICULUM, STARTER_QUESTIONS
@@ -53,7 +53,7 @@ def seed() -> None:
                 db.add(starter_bank)
                 db.flush()
             if db.query(Question).filter(Question.question_bank_id == starter_bank.id, Question.title == title).first() is None:
-                db.add(Question(question_bank_id=starter_bank.id, title=title, description="Original ElectroQuest numerical problem.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty(difficulty), content_html=f"<p>{prompt}</p>", solution_html=f"<p>Expected result: {expected}</p>", explanation="Check the governing equation, substitute SI quantities, and verify the unit.", expected_answer=expected, numerical_tolerance=tolerance, accepted_units=units, xp_reward=10 if difficulty == "easy" else 20, bloom_level="apply", is_published=True))
+                db.add(Question(question_bank_id=starter_bank.id, title=title, description="Original ElectroQuest numerical problem.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty(difficulty), content_html=f"<p>{prompt}</p>", solution_html=f"<p>Expected result: {expected}</p>", explanation="Check the governing equation, substitute SI quantities, and verify the unit.", expected_answer=expected, numerical_tolerance=tolerance, accepted_units=units, xp_reward=10 if difficulty == "easy" else 20, bloom_level="apply", is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False))
 
         # Deterministic warm-up generators provide twenty distinct easy variants per
         # Engineering Mathematics section. The same generator contract can be
@@ -89,7 +89,7 @@ def seed() -> None:
                 db.flush()
             for title, prompt, expected in variants:
                 if db.query(Question).filter(Question.question_bank_id == math_bank.id, Question.title == title).first() is None:
-                    db.add(Question(question_bank_id=math_bank.id, title=title, description="Generated warm-up variant.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt}</p>", solution_html=f"<p>Expected result: {expected}</p>", explanation="Apply the section method carefully and verify the arithmetic.", expected_answer=expected, numerical_tolerance=0.001, accepted_units=[], xp_reward=10, bloom_level="apply", is_published=True))
+                    db.add(Question(question_bank_id=math_bank.id, title=title, description="Generated warm-up variant.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt}</p>", solution_html=f"<p>Expected result: {expected}</p>", explanation="Apply the section method carefully and verify the arithmetic.", expected_answer=expected, numerical_tolerance=0.001, accepted_units=[], xp_reward=10, bloom_level="apply", is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False))
 
         # Pre-engineering foundations: every section receives a complete 20-item
         # warm-up pool so a new learner never starts with engineering mathematics.
@@ -112,7 +112,7 @@ def seed() -> None:
             for i in range(1, 21):
                 title, prompt, expected, units = generator(i)
                 if db.query(Question).filter_by(question_bank_id=bank.id, title=title).first() is None:
-                    db.add(Question(question_bank_id=bank.id, title=title, question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt}</p>", explanation="Use the basic relationship shown in the question and check the unit.", expected_answer=expected, numerical_tolerance=0.001, accepted_units=units, xp_reward=10, bloom_level="apply", is_published=True))
+                    db.add(Question(question_bank_id=bank.id, title=title, question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt}</p>", explanation="Use the basic relationship shown in the question and check the unit.", expected_answer=expected, numerical_tolerance=0.001, accepted_units=units, xp_reward=10, bloom_level="apply", is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False))
                 elif key == ("basic-physics", "Work energy and power"):
                     existing = db.query(Question).filter_by(question_bank_id=bank.id, title=title).first()
                     existing.content_html = f"<p>{prompt}</p>"
@@ -143,7 +143,7 @@ def seed() -> None:
             for i in range(1, 21):
                 title = f"Coding Lab {i:02d}"
                 if db.query(Question).filter_by(question_bank_id=bank.id, title=title).first() is None:
-                    db.add(Question(question_bank_id=bank.id, title=title, description="Interactive programming exercise.", question_type=QuestionType.SHORT_ANSWER, difficulty=QuestionDifficulty.EASY if i <= 10 else QuestionDifficulty.MEDIUM, content_html=f"<p>{prompt.format(n=i+2)}</p><p>Your solution is checked against {len(required)} code requirements.</p>", explanation="All declared code requirements passed.", coding_language=language, starter_code=starter.format(n=i+2), test_cases=[{"name": f"Uses {token.strip()}", "required": [token], "forbidden": ["eval(", "exec(", "__import__"]} for token in required], xp_reward=15 if i <= 10 else 20, bloom_level="create", is_published=True))
+                    db.add(Question(question_bank_id=bank.id, title=title, description="Interactive programming exercise.", question_type=QuestionType.SHORT_ANSWER, difficulty=QuestionDifficulty.EASY if i <= 10 else QuestionDifficulty.MEDIUM, content_html=f"<p>{prompt.format(n=i+2)}</p><p>Your solution is checked against {len(required)} code requirements.</p>", explanation="All declared code requirements passed.", coding_language=language, starter_code=starter.format(n=i+2), test_cases=[{"name": f"Uses {token.strip()}", "required": [token], "forbidden": ["eval(", "exec(", "__import__"]} for token in required], xp_reward=15 if i <= 10 else 20, bloom_level="create", is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False))
 
         # Networking begins with conceptual and subnet arithmetic practice.
         network_questions = {
@@ -163,7 +163,7 @@ def seed() -> None:
                 expected = fixed or str((2 ** (32-prefix))-2)
                 item_title = f"{title} {i:02d}"
                 if db.query(Question).filter_by(question_bank_id=bank.id, title=item_title).first() is None:
-                    db.add(Question(question_bank_id=bank.id, title=item_title, question_type=QuestionType.NUMERICAL if fixed is None else QuestionType.SHORT_ANSWER, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt.format(prefix=prefix)}</p>", explanation="Review the protocol layer or subnet host-bit calculation.", expected_answer=expected, numerical_tolerance=0, accepted_units=[], xp_reward=10, is_published=True))
+                    db.add(Question(question_bank_id=bank.id, title=item_title, question_type=QuestionType.NUMERICAL if fixed is None else QuestionType.SHORT_ANSWER, difficulty=QuestionDifficulty.EASY, content_html=f"<p>{prompt.format(prefix=prefix)}</p>", explanation="Review the protocol layer or subnet host-bit calculation.", expected_answer=expected, numerical_tolerance=0, accepted_units=[], xp_reward=10, is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False))
 
         instructor = db.query(User).filter(User.username == "demo-instructor").first()
         if instructor is None:
@@ -257,7 +257,7 @@ def seed() -> None:
 
         question = db.query(Question).filter(Question.question_bank_id == bank.id).first()
         if question is None:
-            question = Question(question_bank_id=bank.id, title="Calculate the current", description="Use Ohm's law.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html="<p>A 12 V source is connected across a 6 ohm resistor. What current flows?</p>", solution_html="<p>I = V / R = 12 / 6 = 2 A.</p>", explanation="Current is voltage divided by resistance.", expected_answer="2", numerical_tolerance=0.01, accepted_units=["A"], xp_reward=10, is_published=True)
+            question = Question(question_bank_id=bank.id, title="Calculate the current", description="Use Ohm's law.", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html="<p>A 12 V source is connected across a 6 ohm resistor. What current flows?</p>", solution_html="<p>I = V / R = 12 / 6 = 2 A.</p>", explanation="Current is voltage divided by resistance.", expected_answer="2", numerical_tolerance=0.01, accepted_units=["A"], xp_reward=10, is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False)
             db.add(question)
             db.flush()
 

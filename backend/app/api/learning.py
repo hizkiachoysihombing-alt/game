@@ -17,6 +17,11 @@ from app.models.models import (
     UsageLedger, Subscription, SubscriptionPlan,
 )
 from app.services.assessment import grade_question
+from app.services.question_workflow import (
+    is_learner_visible,
+    learner_question_filters,
+    learner_source_recommendations,
+)
 from app.services.progress import (
     evaluate_achievements, get_profile, grant_xp, record_activity,
     record_diagnosis, update_mastery, update_quests, update_ranked_score,
@@ -104,8 +109,8 @@ async def list_problems(
     db: Session = Depends(get_db)
 ):
     """Get available problems."""
-    questions = db.query(Question).filter(Question.is_published.is_(True)).order_by(Question.id).limit(20).all()
-    return [{"id": item.id, "title": item.title, "content_html": item.content_html, "question_type": item.question_type.value, "difficulty": item.difficulty.value, "answers": [{"id": answer.id, "text": answer.text, "order": answer.order} for answer in item.answers]} for item in questions]
+    questions = db.query(Question).filter(*learner_question_filters()).order_by(Question.id).limit(20).all()
+    return [{"id": item.id, "title": item.title, "content_html": item.content_html, "question_type": item.question_type.value, "difficulty": item.difficulty.value, "answers": [{"id": answer.id, "text": answer.text, "order": answer.order} for answer in item.answers], "sources": learner_source_recommendations(item, purposes={"prompt"})} for item in questions]
 
 
 @router.post("/problems/{problem_id}/submit")
@@ -116,12 +121,12 @@ async def submit_problem(
     db: Session = Depends(get_db)
 ):
     """Submit a problem solution."""
-    question = db.query(Question).filter(Question.id == problem_id, Question.is_published.is_(True)).first()
+    question = db.query(Question).filter(Question.id == problem_id, *learner_question_filters()).first()
     if question is None:
         raise HTTPException(status_code=404, detail="Problem not found")
     submission = db.query(ProblemSubmission).filter(ProblemSubmission.session_id == submission_data.session_id).first()
     if submission is not None:
-        return {"id": submission.id, "is_correct": submission.is_correct, "score": submission.score, "xp_awarded": submission.xp_awarded, "feedback": submission.feedback, "duplicate": True}
+        return {"id": submission.id, "is_correct": submission.is_correct, "score": submission.score, "xp_awarded": submission.xp_awarded, "feedback": submission.feedback, "duplicate": True, "recommended_sources": learner_source_recommendations(question)}
     stored_answer = submission_data.answer
     if submission_data.response_time_seconds is not None:
         stored_answer = dict(stored_answer) if isinstance(stored_answer, dict) else {"value": stored_answer}
@@ -157,7 +162,7 @@ async def submit_problem(
         await cache_delete("leaderboard:weekly:ranked_engineering")
         await cache_delete("leaderboard:daily:ranked_engineering")
         await cache_delete("leaderboard:monthly:ranked_engineering")
-    return {"id": submission.id, "is_correct": is_correct, "score": submission.score, "xp_awarded": xp, "ranked_points": ranked_points, "feedback": submission.feedback, "mastery": mastery.mastery_level, "diagnosis": grade.error_code}
+    return {"id": submission.id, "is_correct": is_correct, "score": submission.score, "xp_awarded": xp, "ranked_points": ranked_points, "feedback": submission.feedback, "mastery": mastery.mastery_level, "diagnosis": grade.error_code, "recommended_sources": learner_source_recommendations(question)}
 
 
 @router.get("/quizzes/{quiz_id}")
@@ -167,7 +172,8 @@ async def get_quiz(quiz_id: int, db: Session = Depends(get_db)):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id, Quiz.is_published.is_(True)).first()
     if quiz is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
-    return {"id": quiz.id, "name": quiz.name, "description": quiz.description, "time_limit_minutes": quiz.time_limit_minutes, "questions": [{"id": question.id, "title": question.title, "content_html": question.content_html} for question in quiz.questions]}
+    visible_questions = [question for question in quiz.questions if is_learner_visible(question)]
+    return {"id": quiz.id, "name": quiz.name, "description": quiz.description, "time_limit_minutes": quiz.time_limit_minutes, "questions": [{"id": question.id, "title": question.title, "content_html": question.content_html} for question in visible_questions]}
 
 
 @router.post("/quizzes/{quiz_id}/submit")

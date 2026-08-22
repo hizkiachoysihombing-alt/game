@@ -2,20 +2,9 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/services/api-client';
+import { apiClient, type ApiUser } from '@/services/api-client';
 
-interface User {
-  id: string;
-  email: string;
-  username: string;
-  full_name: string;
-  role: 'STUDENT' | 'INSTRUCTOR' | 'ADMIN';
-  avatar_url?: string;
-  bio?: string;
-  institution?: string;
-  major?: string;
-  created_at?: string;
-}
+export type User = ApiUser;
 
 interface AuthContextType {
   user: User | null;

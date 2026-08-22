@@ -2,8 +2,9 @@
 Backend configuration using environment variables.
 """
 
-from typing import List
 import os
+from pathlib import Path
+from typing import List
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -52,6 +53,35 @@ class Settings:
     
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+    # Private learning-source storage. Local storage is the safe development
+    # default; production can switch to any S3-compatible service (S3, R2,
+    # MinIO) without exposing storage credentials or paths through the API.
+    SOURCE_STORAGE_BACKEND: str = os.getenv("SOURCE_STORAGE_BACKEND", "local").lower()
+    SOURCE_LOCAL_ROOT: str = os.getenv(
+        "SOURCE_LOCAL_ROOT",
+        str(Path(__file__).resolve().parents[3] / "source_storage"),
+    )
+    SOURCE_MATERIALS_ROOT: str = os.getenv(
+        "SOURCE_MATERIALS_ROOT",
+        os.getenv(
+            "SOURCE_MATERIALS_DIR",
+            str(Path(__file__).resolve().parents[3] / "source_materials"),
+        ),
+    )
+    SOURCE_MAX_UPLOAD_BYTES: int = int(
+        os.getenv("SOURCE_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))
+    )
+    SOURCE_IMPORT_LEGACY: bool = os.getenv("SOURCE_IMPORT_LEGACY", "true").lower() == "true"
+    S3_ENDPOINT_URL: str = os.getenv("S3_ENDPOINT_URL", "")
+    S3_REGION: str = os.getenv("S3_REGION", "us-east-1")
+    S3_BUCKET: str = os.getenv("S3_BUCKET", "")
+    S3_ACCESS_KEY: str = os.getenv("S3_ACCESS_KEY", os.getenv("S3_ACCESS_KEY_ID", ""))
+    S3_SECRET_KEY: str = os.getenv(
+        "S3_SECRET_KEY", os.getenv("S3_SECRET_ACCESS_KEY", "")
+    )
+    S3_FORCE_PATH_STYLE: bool = os.getenv("S3_FORCE_PATH_STYLE", "false").lower() == "true"
+    S3_SERVER_SIDE_ENCRYPTION: str = os.getenv("S3_SERVER_SIDE_ENCRYPTION", "")
     
     # Learning Energy
     FREE_PLAN_DAILY_ENERGY: int = int(os.getenv("FREE_PLAN_DAILY_ENERGY", "25"))
@@ -75,5 +105,14 @@ class Settings:
 
 settings = Settings()
 
-if settings.APP_ENV == "production" and settings.SECRET_KEY == "your-super-secret-key-change-in-production":
-    raise RuntimeError("SECRET_KEY must be explicitly configured in production")
+if settings.APP_ENV == "production":
+    if (
+        not settings.SECRET_KEY.strip()
+        or settings.SECRET_KEY == "your-super-secret-key-change-in-production"
+        or len(settings.SECRET_KEY) < 32
+    ):
+        raise RuntimeError("SECRET_KEY must be explicitly configured with at least 32 characters in production")
+    if not settings.DATABASE_URL.strip():
+        raise RuntimeError("DATABASE_URL must be explicitly configured in production")
+    if not settings.CORS_ORIGINS:
+        raise RuntimeError("CORS_ORIGINS must contain at least one trusted origin in production")

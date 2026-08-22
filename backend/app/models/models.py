@@ -14,12 +14,49 @@ Complete data models covering:
 """
 
 from datetime import datetime, timedelta
-from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, ForeignKey, Enum, JSON, Table, UniqueConstraint
+from uuid import uuid4
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
 
 from app.core.database import Base
 from app.core.permissions import UserRole
+
+
+class SourceStatus(str, PyEnum):
+    """Editorial lifecycle for a learning source."""
+
+    INBOX = "inbox"
+    REVIEW_PENDING = "review_pending"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+class QuestionWorkflowStatus(str, PyEnum):
+    """Review lifecycle for authored or generated questions."""
+
+    DRAFT = "draft"
+    PENDING_REVIEW = "pending_review"
+    REJECTED = "rejected"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
 
 
 # ============================================================================
@@ -98,6 +135,10 @@ class Subject(Base):
     courses = relationship("Course", back_populates="subject")
     topics = relationship("Topic", back_populates="subject")
     learning_paths = relationship("LearningPath", back_populates="subject")
+
+    __table_args__ = (
+        Index("ix_subjects_semester_order", "semester", "order"),
+    )
 
 
 class LearningPath(Base):
@@ -329,6 +370,19 @@ class Question(Base):
     # Tracking
     author_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Instructor who created it
     is_published = Column(Boolean, default=False)
+    workflow_status = Column(
+        String(30),
+        default=QuestionWorkflowStatus.DRAFT.value,
+        server_default=QuestionWorkflowStatus.DRAFT.value,
+        nullable=False,
+    )
+    requires_citation = Column(Boolean, default=True, server_default="true", nullable=False)
+    generated_by_ai = Column(Boolean, default=False, server_default="false", nullable=False)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_notes = Column(Text)
+    published_at = Column(DateTime, nullable=True)
+    generation_metadata = Column(JSON)
     times_answered = Column(Integer, default=0)
     average_accuracy = Column(Float)
     
@@ -341,6 +395,11 @@ class Question(Base):
     misconceptions = relationship("Misconception", back_populates="question")
     submissions = relationship("ProblemSubmission", back_populates="question")
     answers = relationship("QuestionAnswer", back_populates="question", cascade="all, delete-orphan")
+    citations = relationship(
+        "QuestionSourceCitation",
+        back_populates="question",
+        cascade="all, delete-orphan",
+    )
 
 
 class QuestionBank(Base):
@@ -426,6 +485,9 @@ class ProblemSubmissionStatus(str, PyEnum):
 class ProblemSubmission(Base):
     """Student submissions to problems."""
     __tablename__ = "problem_submissions"
+    __table_args__ = (
+        Index("ix_problem_submissions_user_submitted", "user_id", "submitted_at"),
+    )
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -614,6 +676,10 @@ class Leaderboard(Base):
     rank = Column(Integer)
     score = Column(Integer)  # XP or custom score
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_leaderboards_period_category_score", "period", "category", "score"),
+    )
 
 
 # ============================================================================
@@ -896,6 +962,299 @@ class UsageLedger(Base):
     idempotency_key = Column(String(255), unique=True, index=True)  # Prevent duplicate charges
     
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+# ============================================================================
+# SOURCE LIBRARY, READING, AND QUESTION PROVENANCE
+# ============================================================================
+
+class SourceDocument(Base):
+    """Logical learning source whose immutable files are stored as versions."""
+
+    __tablename__ = "source_documents"
+
+    id = Column(Integer, primary_key=True)
+    public_id = Column(String(36), default=lambda: str(uuid4()), nullable=False, unique=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
+    course_id = Column(Integer, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True)
+    title = Column(String(300), nullable=False)
+    description = Column(Text)
+    kind = Column(String(50), default="material", server_default="material", nullable=False)
+    rights_status = Column(
+        String(40), default="internal_learning", server_default="internal_learning", nullable=False
+    )
+    attribution = Column(Text)
+    status = Column(
+        String(30),
+        default=SourceStatus.INBOX.value,
+        server_default=SourceStatus.INBOX.value,
+        nullable=False,
+    )
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    archived_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    subject = relationship("Subject")
+    course = relationship("Course")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
+    versions = relationship(
+        "SourceVersion",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="SourceVersion.version_number",
+    )
+    topic_links = relationship(
+        "SourceDocumentTopic", back_populates="document", cascade="all, delete-orphan"
+    )
+    bookmarks = relationship("SourceBookmark", back_populates="document", cascade="all, delete-orphan")
+    reading_progress = relationship(
+        "SourceReadProgress", back_populates="document", cascade="all, delete-orphan"
+    )
+    read_events = relationship("SourceReadEvent", back_populates="document", cascade="all, delete-orphan")
+    workflow_events = relationship(
+        "SourceWorkflowEvent", back_populates="document", cascade="all, delete-orphan"
+    )
+    reports = relationship("SourceReport", back_populates="document", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_source_documents_status_subject", "status", "subject_id"),
+        Index("ix_source_documents_status_course", "status", "course_id"),
+    )
+
+
+class SourceBlob(Base):
+    """Immutable content-addressed file stored locally or in S3-compatible storage."""
+
+    __tablename__ = "source_blobs"
+
+    id = Column(Integer, primary_key=True)
+    sha256 = Column(String(64), nullable=False, unique=True, index=True)
+    size_bytes = Column(BigInteger, nullable=False)
+    media_type = Column(String(255), nullable=False)
+    extension = Column(String(20), nullable=False)
+    storage_backend = Column(String(20), nullable=False)
+    storage_key = Column(String(1024), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    versions = relationship("SourceVersion", back_populates="blob")
+
+
+class SourceVersion(Base):
+    """An immutable version of a logical source document."""
+
+    __tablename__ = "source_versions"
+
+    id = Column(Integer, primary_key=True)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    blob_id = Column(Integer, ForeignKey("source_blobs.id", ondelete="RESTRICT"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+    original_filename = Column(String(512), nullable=False)
+    page_count = Column(Integer, nullable=True)
+    uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    document = relationship("SourceDocument", back_populates="versions")
+    blob = relationship("SourceBlob", back_populates="versions")
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
+    citations = relationship("QuestionSourceCitation", back_populates="source_version")
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_source_version_number"),
+        UniqueConstraint("document_id", "blob_id", name="uq_source_version_blob"),
+        Index("ix_source_versions_document_created", "document_id", "created_at"),
+    )
+
+
+class SourceDocumentTopic(Base):
+    """Topic classification for a source document."""
+
+    __tablename__ = "source_document_topics"
+
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True)
+    is_primary = Column(Boolean, default=False, server_default="false", nullable=False)
+
+    document = relationship("SourceDocument", back_populates="topic_links")
+    topic = relationship("Topic")
+
+
+class SourceBookmark(Base):
+    """A user's saved source, optionally pinned to a version and page."""
+
+    __tablename__ = "source_bookmarks"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    source_version_id = Column(
+        Integer, ForeignKey("source_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    page_number = Column(Integer, nullable=True)
+    note = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User")
+    document = relationship("SourceDocument", back_populates="bookmarks")
+    source_version = relationship("SourceVersion")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "document_id", name="uq_source_bookmark_user_document"),
+        Index("ix_source_bookmarks_user_created", "user_id", "created_at"),
+    )
+
+
+class SourceReadProgress(Base):
+    """Resume position and aggregate reading progress for one user and source."""
+
+    __tablename__ = "source_read_progress"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    source_version_id = Column(
+        Integer, ForeignKey("source_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    last_page = Column(Integer, nullable=True)
+    progress_percent = Column(Float, default=0.0, server_default="0", nullable=False)
+    last_opened_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User")
+    document = relationship("SourceDocument", back_populates="reading_progress")
+    source_version = relationship("SourceVersion")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "document_id", name="uq_source_progress_user_document"),
+        Index("ix_source_read_progress_user_opened", "user_id", "last_opened_at"),
+    )
+
+
+class SourceReadEvent(Base):
+    """Append-only, coarse-grained source reading event."""
+
+    __tablename__ = "source_read_events"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    source_version_id = Column(
+        Integer, ForeignKey("source_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    event_type = Column(String(30), nullable=False)
+    page_number = Column(Integer, nullable=True)
+    session_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User")
+    document = relationship("SourceDocument", back_populates="read_events")
+    source_version = relationship("SourceVersion")
+
+    __table_args__ = (
+        Index("ix_source_read_events_user_created", "user_id", "created_at"),
+        Index("ix_source_read_events_document_created", "document_id", "created_at"),
+    )
+
+
+class SourceWorkflowEvent(Base):
+    """Immutable audit entry for a source lifecycle transition."""
+
+    __tablename__ = "source_workflow_events"
+
+    id = Column(Integer, primary_key=True)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    from_status = Column(String(30), nullable=True)
+    to_status = Column(String(30), nullable=False)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    document = relationship("SourceDocument", back_populates="workflow_events")
+    actor = relationship("User")
+
+    __table_args__ = (
+        Index("ix_source_workflow_document_created", "document_id", "created_at"),
+    )
+
+
+class QuestionSourceCitation(Base):
+    """Page/section provenance for a question, bound to an immutable source version."""
+
+    __tablename__ = "question_source_citations"
+
+    id = Column(Integer, primary_key=True)
+    question_id = Column(Integer, ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
+    source_version_id = Column(
+        Integer, ForeignKey("source_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    page_start = Column(Integer, nullable=True)
+    page_end = Column(Integer, nullable=True)
+    section_label = Column(String(255), nullable=True)
+    locator_text = Column(String(500), nullable=True)
+    excerpt = Column(Text)
+    purpose = Column(String(30), nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    question = relationship("Question", back_populates="citations")
+    source_version = relationship("SourceVersion", back_populates="citations")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+
+    __table_args__ = (
+        Index("ix_question_source_citations_question", "question_id"),
+        Index("ix_question_source_citations_version", "source_version_id"),
+    )
+
+
+class SourceReport(Base):
+    """Student report about an inaccurate, unreadable, or inappropriate source."""
+
+    __tablename__ = "source_reports"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    source_version_id = Column(
+        Integer, ForeignKey("source_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    category = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String(30), default="open", server_default="open", nullable=False)
+    resolved_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", foreign_keys=[user_id])
+    document = relationship("SourceDocument", back_populates="reports")
+    source_version = relationship("SourceVersion")
+    resolved_by = relationship("User", foreign_keys=[resolved_by_id])
+
+    __table_args__ = (
+        Index("ix_source_reports_document_status", "document_id", "status"),
+        Index("ix_source_reports_user_created", "user_id", "created_at"),
+    )
 
 
 # ============================================================================

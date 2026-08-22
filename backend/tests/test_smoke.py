@@ -13,7 +13,7 @@ from app.core.database import engine, get_db
 from app.main import app
 from app.models.models import (
     Course, GamificationProfile, Lesson, Module, Question, QuestionBank, ReasoningDiagnosis,
-    QuestionDifficulty, QuestionType, Subject, Topic, User,
+    QuestionDifficulty, QuestionType, QuestionWorkflowStatus, Subject, Topic, User,
 )
 from app.core.security import hash_password
 from app.core.permissions import UserRole
@@ -73,7 +73,7 @@ def seed_course(db: Session) -> tuple[Course, Lesson, Question]:
     db.add(lesson); db.flush()
     bank = QuestionBank(topic_id=topic.id, name="Test Bank")
     db.add(bank); db.flush()
-    question = Question(question_bank_id=bank.id, title="Current", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html="12 V / 6 ohm", expected_answer="2 A", accepted_units=["A", "mA"], numerical_tolerance=0.001, xp_reward=10, is_published=True)
+    question = Question(question_bank_id=bank.id, title="Current", question_type=QuestionType.NUMERICAL, difficulty=QuestionDifficulty.EASY, content_html="12 V / 6 ohm", expected_answer="2 A", accepted_units=["A", "mA"], numerical_tolerance=0.001, xp_reward=10, is_published=True, workflow_status=QuestionWorkflowStatus.PUBLISHED.value, requires_citation=False)
     db.add(question); db.commit()
     return course, lesson, question
 

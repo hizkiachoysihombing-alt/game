@@ -68,8 +68,9 @@ pnpm-debug.log*
 
 # Environment
 .env
-.env.local
-.env.production.local
+.env.*
+!.env.example
+!.env.production.example
 
 # Database
 *.sqlite
@@ -78,6 +79,7 @@ pgdata/
 
 # Private source materials (PDF, Word, and ingestion batches)
 source_materials/
+source_storage/
 
 # Logs
 logs/

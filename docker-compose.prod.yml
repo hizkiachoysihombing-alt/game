@@ -29,9 +29,21 @@ services:
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
       SOURCE_MATERIALS_ROOT: /source_materials
+      SOURCE_STORAGE_BACKEND: ${SOURCE_STORAGE_BACKEND:-local}
+      SOURCE_LOCAL_ROOT: /source_storage
+      SOURCE_MAX_UPLOAD_BYTES: ${SOURCE_MAX_UPLOAD_BYTES:-52428800}
+      SOURCE_IMPORT_LEGACY: ${SOURCE_IMPORT_LEGACY:-true}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
     volumes:
       - ./source_materials:/source_materials:ro
-    command: ["sh", "-c", "python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}"]
+      - source_storage_prod_data:/source_storage
+    command: ["sh", "-c", "python -m alembic upgrade head && python -m app.commands.import_legacy_sources && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}"]
     depends_on:
       redis:
         condition: service_healthy
@@ -52,6 +64,7 @@ services:
 
 volumes:
   redis_prod_data:
+  source_storage_prod_data:
 
 networks:
   internal:
