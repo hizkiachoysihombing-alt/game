@@ -21,16 +21,9 @@ UNIT_STAGES = [
 ]
 
 
-def unlocked_subject_count(profile: GamificationProfile | None) -> int:
-    # One new chapter per level keeps prerequisites meaningful: a new learner
-    # completes Basic Mathematics before Physics and Engineering Mathematics.
-    return max(1, min(64, profile.level if profile else 1))
-
-
 @router.get("/map")
 async def journey_map(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     profile = db.query(GamificationProfile).filter_by(user_id=current_user.id).first()
-    unlocked_count = unlocked_subject_count(profile)
     mastery = {row.topic_id: row for row in db.query(MasteryRecord).filter_by(user_id=current_user.id).all()}
     subjects = db.query(Subject).options(selectinload(Subject.topics)).filter(Subject.order < 900).order_by(Subject.order, Subject.id).all()
     question_counts = dict(
@@ -41,8 +34,7 @@ async def journey_map(current_user=Depends(get_current_user), db: Session = Depe
         .all()
     )
     payload = []
-    for index, subject in enumerate(subjects):
-        unlocked = index < unlocked_count
+    for subject in subjects:
         topics = []
         for topic in subject.topics:
             record = mastery.get(topic.id)
@@ -51,43 +43,38 @@ async def journey_map(current_user=Depends(get_current_user), db: Session = Depe
             mastery_level = record.mastery_level if record else 0
             units = []
             for unit_index, unit_name, required_attempts, required_mastery in UNIT_STAGES:
-                unit_unlocked = unlocked and question_count > 0 and attempts >= required_attempts and mastery_level >= required_mastery
                 if unit_index < 5:
                     next_attempts, next_mastery = UNIT_STAGES[unit_index][2], UNIT_STAGES[unit_index][3]
                     completed = attempts >= next_attempts and mastery_level >= next_mastery
                 else:
                     completed = False
-                units.append({"index": unit_index, "name": unit_name, "status": "endless" if unit_index == 5 and unit_unlocked else "completed" if completed else "current" if unit_unlocked else "locked", "required_attempts": required_attempts, "required_mastery": required_mastery})
-            topics.append({"id": topic.id, "name": topic.name, "mastery": mastery_level, "attempts": attempts, "available_questions": question_count, "status": "mastered" if record and record.mastered else "ready" if unlocked and question_count else "practice_coming" if unlocked else "locked", "units": units})
-        payload.append({"id": subject.id, "name": subject.name, "slug": subject.slug, "order": subject.order, "unlocked": unlocked, "topics": topics})
-    return {"level": profile.level if profile else 1, "unlocked_subjects": unlocked_count, "subjects": payload}
+                status = "unavailable" if question_count == 0 else "endless" if unit_index == 5 else "completed" if completed else "current"
+                units.append({"index": unit_index, "name": unit_name, "status": status, "recommended": attempts >= required_attempts and mastery_level >= required_mastery, "required_attempts": required_attempts, "required_mastery": required_mastery})
+            topics.append({"id": topic.id, "name": topic.name, "mastery": mastery_level, "attempts": attempts, "available_questions": question_count, "status": "mastered" if record and record.mastered else "ready" if question_count else "practice_coming", "units": units})
+        payload.append({"id": subject.id, "name": subject.name, "slug": subject.slug, "order": subject.order, "unlocked": True, "topics": topics})
+    return {"level": profile.level if profile else 1, "unlocked_subjects": len(subjects), "subjects": payload}
 
 
 @router.get("/next")
 async def next_adaptive_problem(topic_id: int | None = None, unit: int | None = None, exclude_ids: str | None = None, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     profile = db.query(GamificationProfile).filter_by(user_id=current_user.id).first()
-    unlocked_ids = [row.id for row in db.query(Subject).filter(Subject.order < 900).order_by(Subject.order, Subject.id).limit(unlocked_subject_count(profile)).all()]
     recent_ids = [row.question_id for row in db.query(ProblemSubmission).filter_by(user_id=current_user.id).order_by(ProblemSubmission.submitted_at.desc()).limit(8).all()]
     mastery = {row.topic_id: row for row in db.query(MasteryRecord).filter_by(user_id=current_user.id).all()}
-    candidate_query = db.query(Question).join(QuestionBank).join(Topic).filter(Topic.subject_id.in_(unlocked_ids), Question.is_published.is_(True))
+    candidate_query = db.query(Question).join(QuestionBank).join(Topic).join(Subject).filter(Subject.order < 900, Question.is_published.is_(True))
     if topic_id is not None:
-        selected_topic = db.query(Topic).filter(Topic.id == topic_id, Topic.subject_id.in_(unlocked_ids)).first()
+        selected_topic = db.query(Topic).join(Subject).filter(Topic.id == topic_id, Subject.order < 900).first()
         if selected_topic is None:
-            raise HTTPException(status_code=404, detail="Topic is locked or does not exist")
+            raise HTTPException(status_code=404, detail="Topic does not exist")
         if unit is not None:
             if unit < 1 or unit > len(UNIT_STAGES):
                 raise HTTPException(status_code=422, detail="Unknown unit")
-            record = mastery.get(topic_id)
-            required_attempts, required_mastery = UNIT_STAGES[unit - 1][2], UNIT_STAGES[unit - 1][3]
-            if (record.times_practiced if record else 0) < required_attempts or (record.mastery_level if record else 0) < required_mastery:
-                raise HTTPException(status_code=403, detail="Complete earlier units before opening this unit")
         candidate_query = candidate_query.filter(Topic.id == topic_id)
     excluded = {int(value) for value in (exclude_ids or "").split(",") if value.isdigit()}
     candidates = candidate_query.filter(Question.id.notin_(excluded)).all() if excluded else candidate_query.all()
     if not candidates and excluded:
         candidates = candidate_query.all()
     if not candidates:
-        raise HTTPException(status_code=404, detail="No adaptive problems are available for this topic" if topic_id else "No adaptive problems are available for unlocked topics")
+        raise HTTPException(status_code=404, detail="No adaptive problems are available for this topic" if topic_id else "No adaptive problems are available")
     accuracy = profile.accuracy_average if profile else 0
     unit_target = {1: "easy", 2: "easy", 3: "medium", 4: "hard"}.get(unit)
     preferred = unit_target or ("easy" if (profile is None or profile.problems_solved < 3 or accuracy < 55) else "hard" if accuracy >= 90 else "medium")
